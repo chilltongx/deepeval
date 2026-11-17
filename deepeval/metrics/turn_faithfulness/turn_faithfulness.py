@@ -53,8 +53,7 @@ def _turn_faithfulness_limit_description(
 TurnFaithfulnessTemplate = make_template_class("TurnFaithfulnessMetric")
 
 # An empty claim list can mean the turns state nothing checkable or that
-# extraction failed; the score cannot tell them apart, so the reason says
-# which step came back empty (#3629).
+# extraction failed. Use this reason only when claim extraction was empty.
 _NO_CLAIMS_REASON = (
     "No claims were extracted from the assistant turns, so there was "
     "nothing to verify. If those turns make factual statements, the "
@@ -237,7 +236,7 @@ class TurnFaithfulnessMetric(BaseConversationalMetric):
         )
         verdicts = await self._a_generate_verdicts(claims, truths, multimodal)
         score, reason = self._get_interaction_score_and_reason(
-            verdicts, multimodal
+            verdicts, multimodal, claim_count=len(claims)
         )
         interaction_score = InteractionFaithfulnessScore(
             score=score,
@@ -272,7 +271,7 @@ class TurnFaithfulnessMetric(BaseConversationalMetric):
         )
         verdicts = self._generate_verdicts(claims, truths, multimodal)
         score, reason = self._get_interaction_score_and_reason(
-            verdicts, multimodal
+            verdicts, multimodal, claim_count=len(claims)
         )
         interaction_score = InteractionFaithfulnessScore(
             score=score,
@@ -439,12 +438,26 @@ class TurnFaithfulnessMetric(BaseConversationalMetric):
             return (Verdict.YES,)
         return (Verdict.YES, Verdict.BORDERLINE)
 
+    def _empty_verdicts_reason(
+        self, claim_count: Optional[int]
+    ) -> Optional[str]:
+        if not self.include_reason:
+            return None
+        if claim_count == 0:
+            return _NO_CLAIMS_REASON
+        if claim_count is None:
+            return "The evaluation model returned no verdicts, so faithfulness could not be evaluated."
+        return (
+            f"The evaluation model returned no verdicts for the {claim_count} "
+            "extracted claim(s), so faithfulness could not be evaluated."
+        )
+
     def _get_interaction_score_and_reason(
-        self, verdicts, multimodal: bool
+        self, verdicts, multimodal: bool, claim_count: Optional[int] = None
     ) -> Tuple[float, str]:
         number_of_verdicts = len(verdicts)
         if number_of_verdicts == 0:
-            reason = _NO_CLAIMS_REASON if self.include_reason else None
+            reason = self._empty_verdicts_reason(claim_count)
             return 1.0, reason
 
         score = score_qag_verdicts(
@@ -454,11 +467,11 @@ class TurnFaithfulnessMetric(BaseConversationalMetric):
         return score, reason
 
     async def _a_get_interaction_score_and_reason(
-        self, verdicts, multimodal: bool
+        self, verdicts, multimodal: bool, claim_count: Optional[int] = None
     ) -> Tuple[float, str]:
         number_of_verdicts = len(verdicts)
         if number_of_verdicts == 0:
-            reason = _NO_CLAIMS_REASON if self.include_reason else None
+            reason = self._empty_verdicts_reason(claim_count)
             return 1.0, reason
 
         score = score_qag_verdicts(
